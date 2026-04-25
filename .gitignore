@@ -1,0 +1,22 @@
+# Build
+build/
+*.o
+*.obj
+*.exe
+moc_*
+qrc_*
+ui_*
+
+# IDE
+.vscode/
+.idea/
+*.pro.user*
+CMakeLists.txt.user
+
+# Qt
+*.qm
+*.dll
+
+# OS
+.DS_Store
+Thumbs.db
