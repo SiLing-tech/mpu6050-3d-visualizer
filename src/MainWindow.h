@@ -1,30 +1,23 @@
 #pragma once
 
 #include <QMainWindow>
-#include <QComboBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QToolBar>
 
-#include "BluetoothManager.h"
 #include "TcpManager.h"
-#include "Model3DWidget.h"
-#include "DataPanel.h"
 #include "ChartPanel.h"
+#include "Model3DWidget.h"
 #include "AttitudeEstimator.h"
+#include "SensorData.h"
+#include "SensorDataParser.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
-    BluetoothManager *bt_;
     TcpManager *tcp_;
-    AttitudeEstimator estimator_;
-
-    // Bluetooth toolbar widgets
-    QPushButton *scanBtn_;
-    QComboBox *deviceCombo_;
-    QPushButton *btConnectBtn_;
 
     // WiFi toolbar widgets
     QLineEdit *wifiIp_;
@@ -33,24 +26,17 @@ class MainWindow : public QMainWindow {
 
     QLabel *statusLabel_;
 
-    // Content panels
+    AttitudeEstimator estimator_{0.1f};
+
+    // Content
     Model3DWidget *model3D_;
-    DataPanel *dataPanel_;
     ChartPanel *chartPanel_;
+    QPlainTextEdit *rawLog_;
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
 
 private slots:
-    // Bluetooth
-    void onScanClicked();
-    void onBtConnectClicked();
-    void onDeviceDiscovered(const QBluetoothDeviceInfo &info);
-    void onScanFinished();
-    void onBtConnected();
-    void onBtDisconnected();
-    void onBtError(const QString &msg);
-
     // WiFi
     void onWifiConnectClicked();
     void onTcpConnected();
@@ -63,5 +49,4 @@ private slots:
 private:
     void setupUi();
     void setupToolbar();
-    void disconnectAll();
 };

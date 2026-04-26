@@ -1,5 +1,6 @@
 #include "ChartPanel.h"
 #include <QDateTime>
+#include <QOpenGLWidget>
 #include <QtCharts/QChartGlobal>
 
 ChartPanel::ChartPanel(QWidget *parent)
@@ -38,7 +39,7 @@ ChartPanel::ChartPanel(QWidget *parent)
     accelZ_->attachAxis(accelAxisY_);
 
     accelView_ = new QChartView(accelChart_);
-    accelView_->setRenderHint(QPainter::Antialiasing);
+    accelView_->setViewport(new QOpenGLWidget);
 
     // --- Gyroscope chart ---
     gyroX_ = new QLineSeries;
@@ -73,7 +74,7 @@ ChartPanel::ChartPanel(QWidget *parent)
     gyroZ_->attachAxis(gyroAxisY_);
 
     gyroView_ = new QChartView(gyroChart_);
-    gyroView_->setRenderHint(QPainter::Antialiasing);
+    gyroView_->setViewport(new QOpenGLWidget);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -93,29 +94,43 @@ void ChartPanel::addDataPoint(const SensorData &data)
     bufGyroZ_.push(data.gyroZ);
     bufTime_.push(timestamp);
 
+    // Throttle chart redraws to 10 Hz — data arrives at 20 Hz
+    pointCount_++;
+    if (pointCount_ % 2 != 0)
+        return;
+
     const int n = bufAccelX_.size();
 
-    accelX_->clear();
-    accelY_->clear();
-    accelZ_->clear();
-    gyroX_->clear();
-    gyroY_->clear();
-    gyroZ_->clear();
+    // Build point lists from rolling buffers in one pass
+    QList<QPointF> ptsAccelX, ptsAccelY, ptsAccelZ;
+    QList<QPointF> ptsGyroX, ptsGyroY, ptsGyroZ;
+    ptsAccelX.reserve(n);
+    ptsAccelY.reserve(n);
+    ptsAccelZ.reserve(n);
+    ptsGyroX.reserve(n);
+    ptsGyroY.reserve(n);
+    ptsGyroZ.reserve(n);
 
     for (int i = 0; i < n; ++i) {
         qreal t = bufTime_[i];
-        accelX_->append(t, bufAccelX_[i]);
-        accelY_->append(t, bufAccelY_[i]);
-        accelZ_->append(t, bufAccelZ_[i]);
-        gyroX_->append(t, bufGyroX_[i]);
-        gyroY_->append(t, bufGyroY_[i]);
-        gyroZ_->append(t, bufGyroZ_[i]);
+        ptsAccelX.append(QPointF(t, bufAccelX_[i]));
+        ptsAccelY.append(QPointF(t, bufAccelY_[i]));
+        ptsAccelZ.append(QPointF(t, bufAccelZ_[i]));
+        ptsGyroX.append(QPointF(t, bufGyroX_[i]));
+        ptsGyroY.append(QPointF(t, bufGyroY_[i]));
+        ptsGyroZ.append(QPointF(t, bufGyroZ_[i]));
     }
+
+    // Replace all points at once — single signal emission per series
+    accelX_->replace(ptsAccelX);
+    accelY_->replace(ptsAccelY);
+    accelZ_->replace(ptsAccelZ);
+    gyroX_->replace(ptsGyroX);
+    gyroY_->replace(ptsGyroY);
+    gyroZ_->replace(ptsGyroZ);
 
     QDateTime start = QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(bufTime_[0]));
     QDateTime end = QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(timestamp));
     accelAxisX_->setRange(start, end);
     gyroAxisX_->setRange(start, end);
-
-    pointCount_++;
 }

@@ -1,29 +1,17 @@
 #include "MainWindow.h"
-#include "SensorDataParser.h"
 
 #include <QSplitter>
 #include <QVBoxLayout>
-#include <QHBoxLayout>
 #include <QStatusBar>
 #include <QMessageBox>
 #include <QIntValidator>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
-    , bt_(new BluetoothManager(this))
     , tcp_(new TcpManager(this))
-    , estimator_(0.1f)
 {
     setupUi();
     setupToolbar();
-
-    // Bluetooth signals
-    connect(bt_, &BluetoothManager::deviceDiscovered, this, &MainWindow::onDeviceDiscovered);
-    connect(bt_, &BluetoothManager::scanFinished, this, &MainWindow::onScanFinished);
-    connect(bt_, &BluetoothManager::connected, this, &MainWindow::onBtConnected);
-    connect(bt_, &BluetoothManager::disconnected, this, &MainWindow::onBtDisconnected);
-    connect(bt_, &BluetoothManager::errorOccurred, this, &MainWindow::onBtError);
-    connect(bt_, &BluetoothManager::newLineParsed, this, &MainWindow::onNewLine);
 
     // WiFi/TCP signals
     connect(tcp_, &TcpManager::connected, this, &MainWindow::onTcpConnected);
@@ -31,49 +19,40 @@ MainWindow::MainWindow(QWidget *parent)
     connect(tcp_, &TcpManager::errorOccurred, this, &MainWindow::onTcpError);
     connect(tcp_, &TcpManager::newLineParsed, this, &MainWindow::onNewLine);
 
-    statusBar()->showMessage("Ready — Bluetooth or WiFi");
+    statusBar()->showMessage("Ready — WiFi TCP + Charts");
 }
 
 void MainWindow::setupUi()
 {
     model3D_ = new Model3DWidget(this);
-    dataPanel_ = new DataPanel(this);
     chartPanel_ = new ChartPanel(this);
 
-    auto *rightPanel = new QWidget;
-    auto *rightLayout = new QVBoxLayout(rightPanel);
-    rightLayout->setContentsMargins(0, 0, 0, 0);
-    rightLayout->addWidget(dataPanel_, 2);
-    rightLayout->addWidget(chartPanel_, 3);
+    rawLog_ = new QPlainTextEdit(this);
+    rawLog_->setReadOnly(true);
+    rawLog_->setFont(QFont("Consolas", 9));
+    rawLog_->setPlaceholderText("Raw data log...");
+    rawLog_->setMaximumBlockCount(200);
 
-    auto *splitter = new QSplitter(Qt::Horizontal);
-    splitter->addWidget(model3D_);
-    splitter->addWidget(rightPanel);
-    splitter->setStretchFactor(0, 3);
-    splitter->setStretchFactor(1, 2);
+    // Right panel: charts on top, raw log on bottom
+    auto *rightSplitter = new QSplitter(Qt::Vertical);
+    rightSplitter->addWidget(chartPanel_);
+    rightSplitter->addWidget(rawLog_);
+    rightSplitter->setStretchFactor(0, 3);
+    rightSplitter->setStretchFactor(1, 1);
 
-    setCentralWidget(splitter);
+    // Main layout: 3D view on left, panels on right
+    auto *mainSplitter = new QSplitter(Qt::Horizontal);
+    mainSplitter->addWidget(model3D_);
+    mainSplitter->addWidget(rightSplitter);
+    mainSplitter->setStretchFactor(0, 3);
+    mainSplitter->setStretchFactor(1, 2);
+
+    setCentralWidget(mainSplitter);
 }
 
 void MainWindow::setupToolbar()
 {
     auto *toolbar = addToolBar("Connection");
-
-    // --- Bluetooth group ---
-    QLabel *btLabel = new QLabel(" BT:");
-    toolbar->addWidget(btLabel);
-
-    scanBtn_ = new QPushButton("Scan", this);
-    toolbar->addWidget(scanBtn_);
-
-    deviceCombo_ = new QComboBox(this);
-    deviceCombo_->setMinimumWidth(200);
-    toolbar->addWidget(deviceCombo_);
-
-    btConnectBtn_ = new QPushButton("Connect", this);
-    toolbar->addWidget(btConnectBtn_);
-
-    toolbar->addSeparator();
 
     // --- WiFi group ---
     QLabel *wifiLabel = new QLabel(" WiFi:");
@@ -99,79 +78,7 @@ void MainWindow::setupToolbar()
     statusLabel_ = new QLabel(" Idle");
     toolbar->addWidget(statusLabel_);
 
-    connect(scanBtn_, &QPushButton::clicked, this, &MainWindow::onScanClicked);
-    connect(btConnectBtn_, &QPushButton::clicked, this, &MainWindow::onBtConnectClicked);
     connect(wifiConnectBtn_, &QPushButton::clicked, this, &MainWindow::onWifiConnectClicked);
-}
-
-// --- Bluetooth slots ---
-
-void MainWindow::onScanClicked()
-{
-    deviceCombo_->clear();
-    deviceCombo_->addItem("Scanning...");
-    scanBtn_->setEnabled(false);
-    statusLabel_->setText(" BT scanning...");
-    bt_->startScan();
-}
-
-void MainWindow::onBtConnectClicked()
-{
-    if (bt_->isConnected()) {
-        bt_->disconnect();
-        return;
-    }
-
-    disconnectAll();
-
-    int idx = deviceCombo_->currentIndex();
-    if (idx < 0) {
-        QMessageBox::warning(this, "Connect", "No device selected.");
-        return;
-    }
-    btConnectBtn_->setEnabled(false);
-    statusLabel_->setText(" BT connecting...");
-    bt_->connectToDevice(idx);
-}
-
-void MainWindow::onDeviceDiscovered(const QBluetoothDeviceInfo &info)
-{
-    if (deviceCombo_->count() == 1 && deviceCombo_->itemText(0) == "Scanning...")
-        deviceCombo_->clear();
-
-    deviceCombo_->addItem(info.name() + " [" + info.address().toString() + "]");
-}
-
-void MainWindow::onScanFinished()
-{
-    scanBtn_->setEnabled(true);
-    if (deviceCombo_->count() == 0)
-        deviceCombo_->addItem("No devices found");
-    statusLabel_->setText(" BT scan finished");
-}
-
-void MainWindow::onBtConnected()
-{
-    btConnectBtn_->setText("Disconnect");
-    btConnectBtn_->setEnabled(true);
-    statusLabel_->setText(" BT connected");
-    statusBar()->showMessage("Bluetooth connected");
-}
-
-void MainWindow::onBtDisconnected()
-{
-    btConnectBtn_->setText("Connect");
-    btConnectBtn_->setEnabled(true);
-    statusLabel_->setText(" BT disconnected");
-    statusBar()->showMessage("Bluetooth disconnected");
-}
-
-void MainWindow::onBtError(const QString &msg)
-{
-    btConnectBtn_->setEnabled(true);
-    statusLabel_->setText(" BT error");
-    statusBar()->showMessage("BT Error: " + msg);
-    QMessageBox::critical(this, "Bluetooth Error", msg);
 }
 
 // --- WiFi/TCP slots ---
@@ -182,8 +89,6 @@ void MainWindow::onWifiConnectClicked()
         tcp_->disconnect();
         return;
     }
-
-    disconnectAll();
 
     QString ip = wifiIp_->text().trimmed();
     quint16 port = static_cast<quint16>(wifiPort_->text().toUInt());
@@ -226,6 +131,8 @@ void MainWindow::onTcpError(const QString &msg)
 
 void MainWindow::onNewLine(const QString &line)
 {
+    rawLog_->appendPlainText(line);
+
     SensorData data = SensorDataParser::parse(line);
     if (!data.valid)
         return;
@@ -234,16 +141,5 @@ void MainWindow::onNewLine(const QString &line)
     EulerAngles angles = estimator_.eulerAngles();
 
     model3D_->setRotation(angles.roll, angles.pitch, angles.yaw);
-    dataPanel_->updateData(data, angles);
     chartPanel_->addDataPoint(data);
-}
-
-// --- Helpers ---
-
-void MainWindow::disconnectAll()
-{
-    if (bt_->isConnected())
-        bt_->disconnect();
-    if (tcp_->isConnected())
-        tcp_->disconnect();
 }
