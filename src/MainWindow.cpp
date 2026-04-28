@@ -166,24 +166,26 @@ void MainWindow::updateBtButtonState()
 
 void MainWindow::onSwitchToWifi()
 {
-    if (wifiGroup_->isVisible()) return;  // already in WiFi mode
+    if (wifiModeActive_) return;  // already in WiFi mode
     disconnectAll();
     wifiGroup_->setVisible(true);
     btGroup_->setVisible(false);
     wifiModeBtn_->setStyleSheet("background:#2196F3; color:white; font-weight:bold;");
     btModeBtn_->setStyleSheet("");
+    wifiModeActive_ = true;
     updateWifiButtonState();
     statusBar()->showMessage("Switched to WiFi mode");
 }
 
 void MainWindow::onSwitchToBt()
 {
-    if (btGroup_->isVisible()) return;    // already in BT mode
+    if (!wifiModeActive_) return;    // already in BT mode
     disconnectAll();
     wifiGroup_->setVisible(false);
     btGroup_->setVisible(true);
     btModeBtn_->setStyleSheet("background:#2196F3; color:white; font-weight:bold;");
     wifiModeBtn_->setStyleSheet("");
+    wifiModeActive_ = false;
     updateBtButtonState();
     statusBar()->showMessage("Switched to Bluetooth mode");
 }
@@ -295,7 +297,7 @@ void MainWindow::onDeviceDiscovered(const QBluetoothDeviceInfo &info)
 
 void MainWindow::onScanFinished()
 {
-    if (!btGroup_->isVisible()) return;   // ignore if user switched away
+    if (wifiModeActive_) return;   // ignore if in WiFi mode
     scanBtn_->setEnabled(true);
     btConnectBtn_->setEnabled(true);
     statusLabel_->setText(" BT idle");

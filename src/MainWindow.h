@@ -40,6 +40,8 @@ class MainWindow : public QMainWindow {
 
     QLabel *statusLabel_;
 
+    bool wifiModeActive_ = false;  // tracks current mode (not widget visibility)
+
     AttitudeEstimator estimator_{0.1f};
 
     // Content
