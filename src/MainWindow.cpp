@@ -290,8 +290,9 @@ void MainWindow::onScanFinished()
 {
     scanBtn_->setEnabled(true);
     statusLabel_->setText(" BT idle");
-    if (deviceCombo_->count() == 1 && deviceCombo_->itemText(0) == "Scanning...")
-        deviceCombo_->clear();
+    // Remove "Scanning..." placeholder (always at index 0)
+    if (deviceCombo_->count() > 0 && deviceCombo_->itemText(0) == "Scanning...")
+        deviceCombo_->removeItem(0);
     if (deviceCombo_->count() == 0)
         deviceCombo_->addItem("No devices found");
 }
