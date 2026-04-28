@@ -15,7 +15,11 @@ BluetoothManager::BluetoothManager(QObject *parent)
 
 BluetoothManager::~BluetoothManager()
 {
-    disconnect();
+    QObject::disconnect();  // break all signal/slot connections before cleanup
+    delete uartService_;
+    uartService_ = nullptr;
+    delete controller_;
+    controller_ = nullptr;
 }
 
 void BluetoothManager::startScan()
