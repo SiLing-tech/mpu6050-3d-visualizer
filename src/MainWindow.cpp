@@ -133,6 +133,7 @@ void MainWindow::disconnectAll()
     if (tcp_->isConnected())
         tcp_->disconnect();
     wifiConnectBtn_->setEnabled(true);
+    bt_->stopScan();
     if (bt_->isConnected())
         bt_->disconnect();
     btConnectBtn_->setEnabled(true);
@@ -165,6 +166,7 @@ void MainWindow::updateBtButtonState()
 
 void MainWindow::onSwitchToWifi()
 {
+    if (wifiGroup_->isVisible()) return;  // already in WiFi mode
     disconnectAll();
     wifiGroup_->setVisible(true);
     btGroup_->setVisible(false);
@@ -176,6 +178,7 @@ void MainWindow::onSwitchToWifi()
 
 void MainWindow::onSwitchToBt()
 {
+    if (btGroup_->isVisible()) return;    // already in BT mode
     disconnectAll();
     wifiGroup_->setVisible(false);
     btGroup_->setVisible(true);
@@ -292,6 +295,7 @@ void MainWindow::onDeviceDiscovered(const QBluetoothDeviceInfo &info)
 
 void MainWindow::onScanFinished()
 {
+    if (!btGroup_->isVisible()) return;   // ignore if user switched away
     scanBtn_->setEnabled(true);
     btConnectBtn_->setEnabled(true);
     statusLabel_->setText(" BT idle");
