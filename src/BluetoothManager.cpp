@@ -5,12 +5,19 @@ BluetoothManager::BluetoothManager(QObject *parent)
     : QObject(parent)
     , discovery_(new QBluetoothDeviceDiscoveryAgent(this))
     , socket_(new QBluetoothSocket(QBluetoothServiceInfo::RfcommProtocol, this))
+    , localDevice_(new QBluetoothLocalDevice(this))
 {
+    // Scan errors
+    connect(discovery_, &QBluetoothDeviceDiscoveryAgent::errorOccurred,
+            this, &BluetoothManager::onScanError);
+
+    // Device discovery
     connect(discovery_, &QBluetoothDeviceDiscoveryAgent::deviceDiscovered,
             this, &BluetoothManager::onDeviceDiscovered);
     connect(discovery_, &QBluetoothDeviceDiscoveryAgent::finished,
             this, &BluetoothManager::scanFinished);
 
+    // Socket events
     connect(socket_, &QBluetoothSocket::connected,
             this, &BluetoothManager::onSocketConnected);
     connect(socket_, &QBluetoothSocket::disconnected,
@@ -19,6 +26,10 @@ BluetoothManager::BluetoothManager(QObject *parent)
             this, &BluetoothManager::onReadyRead);
     connect(socket_, &QBluetoothSocket::errorOccurred,
             this, &BluetoothManager::onSocketErrorOccurred);
+
+    // Pairing
+    connect(localDevice_, &QBluetoothLocalDevice::pairingFinished,
+            this, &BluetoothManager::onPairingFinished);
 }
 
 BluetoothManager::~BluetoothManager()
@@ -29,7 +40,7 @@ BluetoothManager::~BluetoothManager()
 void BluetoothManager::startScan()
 {
     devices_.clear();
-    discovery_->start();
+    discovery_->start(QBluetoothDeviceDiscoveryAgent::ClassicMethod);
 }
 
 void BluetoothManager::stopScan()
@@ -45,7 +56,20 @@ void BluetoothManager::connectToDevice(int deviceIndex)
     }
 
     const QBluetoothDeviceInfo &info = devices_[deviceIndex];
-    socket_->connectToService(info.address(), QBluetoothServiceInfo::RfcommProtocol);
+
+    // Ensure device is paired (Windows requires pairing for SPP)
+    QBluetoothLocalDevice::Pairing pairing = localDevice_->pairingStatus(info.address());
+    if (pairing != QBluetoothLocalDevice::Paired
+        && pairing != QBluetoothLocalDevice::AuthorizedPaired) {
+        qDebug() << "Requesting pairing with" << info.name();
+        localDevice_->requestPairing(info.address(), QBluetoothLocalDevice::Paired);
+        return;  // will retry in onPairingFinished
+    }
+
+    // Connect using standard SPP UUID
+    static const QBluetoothUuid sppUuid(QBluetoothUuid::ServiceClassUuid::SerialPort);
+    qDebug() << "Connecting to" << info.name() << "SPP UUID:" << sppUuid.toString();
+    socket_->connectToService(info.address(), sppUuid);
 }
 
 void BluetoothManager::disconnect()
@@ -61,20 +85,33 @@ bool BluetoothManager::isConnected() const
 
 void BluetoothManager::onDeviceDiscovered(const QBluetoothDeviceInfo &info)
 {
+    qDebug() << "BT device found:" << info.name()
+             << info.address().toString()
+             << "rssi:" << info.rssi();
+
     if (info.name().isEmpty())
         return;
+
     devices_.append(info);
     emit deviceDiscovered(info);
 }
 
+void BluetoothManager::onScanError(QBluetoothDeviceDiscoveryAgent::Error error)
+{
+    qDebug() << "BT scan error:" << error;
+    emit errorOccurred(discovery_->errorString());
+}
+
 void BluetoothManager::onSocketConnected()
 {
+    qDebug() << "BT socket connected";
     buffer_.clear();
     emit connected();
 }
 
 void BluetoothManager::onSocketDisconnected()
 {
+    qDebug() << "BT socket disconnected";
     emit disconnected();
 }
 
@@ -82,7 +119,6 @@ void BluetoothManager::onReadyRead()
 {
     buffer_.append(socket_->readAll());
 
-    // Extract complete lines (newline-delimited)
     while (true) {
         int idx = buffer_.indexOf('\n');
         if (idx < 0)
@@ -99,5 +135,26 @@ void BluetoothManager::onReadyRead()
 void BluetoothManager::onSocketErrorOccurred(QBluetoothSocket::SocketError error)
 {
     Q_UNUSED(error)
+    qDebug() << "BT socket error:" << socket_->errorString();
     emit errorOccurred(socket_->errorString());
+}
+
+void BluetoothManager::onPairingFinished(QBluetoothAddress address, QBluetoothLocalDevice::Pairing pairing)
+{
+    qDebug() << "Pairing finished:" << address.toString()
+             << "status:" << pairing;
+
+    if (pairing == QBluetoothLocalDevice::Paired
+        || pairing == QBluetoothLocalDevice::AuthorizedPaired) {
+        // Retry connection now that device is paired
+        for (int i = 0; i < devices_.size(); ++i) {
+            if (devices_[i].address() == address) {
+                static const QBluetoothUuid sppUuid(QBluetoothUuid::ServiceClassUuid::SerialPort);
+                socket_->connectToService(address, sppUuid);
+                return;
+            }
+        }
+    } else {
+        emit errorOccurred("Pairing failed: " + address.toString());
+    }
 }

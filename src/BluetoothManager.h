@@ -3,7 +3,9 @@
 #include <QObject>
 #include <QBluetoothDeviceDiscoveryAgent>
 #include <QBluetoothSocket>
+#include <QBluetoothLocalDevice>
 #include <QBluetoothDeviceInfo>
+#include <QBluetoothUuid>
 #include <QVector>
 
 class BluetoothManager : public QObject {
@@ -11,6 +13,7 @@ class BluetoothManager : public QObject {
 
     QBluetoothDeviceDiscoveryAgent *discovery_;
     QBluetoothSocket *socket_;
+    QBluetoothLocalDevice *localDevice_;
     QVector<QBluetoothDeviceInfo> devices_;
     QByteArray buffer_;
 
@@ -36,8 +39,10 @@ signals:
 
 private slots:
     void onDeviceDiscovered(const QBluetoothDeviceInfo &info);
+    void onScanError(QBluetoothDeviceDiscoveryAgent::Error error);
     void onSocketConnected();
     void onSocketDisconnected();
     void onReadyRead();
     void onSocketErrorOccurred(QBluetoothSocket::SocketError error);
+    void onPairingFinished(QBluetoothAddress address, QBluetoothLocalDevice::Pairing pairing);
 };
