@@ -1,128 +1,167 @@
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
-#include "BluetoothSerial.h"
+#include <BluetoothSerial.h>
+#include <WiFi.h>
 
-// 检查是否支持蓝牙
 #if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
-#error Bluetooth is not enabled! Please run `make menuconfig` to enable it
+#error Bluetooth is not enabled! Run `make menuconfig` to enable it
 #endif
 
-// 创建MPU6050对象
+// --- Mode flags ---
+bool btEnabled = true;
+bool wifiEnabled = true;
+
+// --- Hardware ---
 Adafruit_MPU6050 mpu;
-
-// 创建蓝牙对象
 BluetoothSerial SerialBT;
+WiFiServer server(8888);
+WiFiClient client;
 
-// 蓝牙设备名称
-const char* deviceName = "ESP32_MPU6050";
+// --- I2C pins ---
+#define I2C_SDA 21
+#define I2C_SCL 22
 
-// I2C引脚定义（根据您的ESP32型号调整）
-#define I2C_SDA 21    // SDA引脚
-#define I2C_SCL 22    // SCL引脚
-
-// 数据发送间隔（毫秒）
-const unsigned long sendInterval = 50; // 20Hz采样率
+// --- Timing ---
+const unsigned long sendInterval = 50;  // 20 Hz
 unsigned long previousMillis = 0;
 
-void setup() {
-  // 初始化串口（用于调试）
-  Serial.begin(115200);
-  Serial.println("ESP32 MPU6050 蓝牙数据传输开始");
-  
-  // 初始化I2C总线
-  Wire.begin(I2C_SDA, I2C_SCL);
-  
-  // 初始化MPU6050
-  if (!mpu.begin()) {
-    Serial.println("MPU6050 初始化失败!");
-    Serial.println("请检查连接或尝试重置设备");
-    while (1) {
-      delay(10);
+// --- WiFi config ---
+const char* wifiSSID = "ESP32_MPU6050";
+const char* wifiPass = "12345678";
+const char* btName = "ESP32_MPU6050";
+
+// --- Mode switching ---
+void setBtMode() {
+    if (btEnabled) return;
+    SerialBT.begin(btName);
+    btEnabled = true;
+    Serial.println("BT restarted");
+}
+
+void setWifiMode() {
+    if (wifiEnabled) return;
+    WiFi.softAP(wifiSSID, wifiPass);
+    server.begin();
+    wifiEnabled = true;
+    Serial.println("WiFi AP restarted");
+}
+
+void setBothMode() {
+    if (!btEnabled) setBtMode();
+    if (!wifiEnabled) setWifiMode();
+}
+
+void setBtOnly() {
+    if (wifiEnabled) {
+        if (client && client.connected()) client.stop();
+        server.end();
+        WiFi.softAPdisconnect(true);
+        wifiEnabled = false;
+        Serial.println("WiFi disabled");
     }
-  }
-  Serial.println("MPU6050 初始化成功");
+    if (!btEnabled) setBtMode();
+}
 
-  // 设置MPU6050参数
-  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
-  Serial.print("加速度计量程设置为: ");
-  switch (mpu.getAccelerometerRange()) {
-    case MPU6050_RANGE_2_G:  Serial.println("+-2G"); break;
-    case MPU6050_RANGE_4_G:  Serial.println("+-4G"); break;
-    case MPU6050_RANGE_8_G:  Serial.println("+-8G"); break;
-    case MPU6050_RANGE_16_G: Serial.println("+-16G"); break;
-  }
-  
-  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-  Serial.print("陀螺仪量程设置为: ");
-  switch (mpu.getGyroRange()) {
-    case MPU6050_RANGE_250_DEG:  Serial.println("+-250 deg/s"); break;
-    case MPU6050_RANGE_500_DEG:  Serial.println("+-500 deg/s"); break;
-    case MPU6050_RANGE_1000_DEG: Serial.println("+-1000 deg/s"); break;
-    case MPU6050_RANGE_2000_DEG: Serial.println("+-2000 deg/s"); break;
-  }
-  
-  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
-  Serial.print("数字低通滤波器设置为: ");
-  switch (mpu.getFilterBandwidth()) {
-    case MPU6050_BAND_260_HZ: Serial.println("260 Hz"); break;
-    case MPU6050_BAND_184_HZ: Serial.println("184 Hz"); break;
-    case MPU6050_BAND_94_HZ:  Serial.println("94 Hz"); break;
-    case MPU6050_BAND_44_HZ:  Serial.println("44 Hz"); break;
-    case MPU6050_BAND_21_HZ:  Serial.println("21 Hz"); break;
-    case MPU6050_BAND_10_HZ:  Serial.println("10 Hz"); break;
-    case MPU6050_BAND_5_HZ:   Serial.println("5 Hz"); break;
-  }
+void setWifiOnly() {
+    if (btEnabled) {
+        SerialBT.end();
+        btEnabled = false;
+        Serial.println("BT disabled");
+    }
+    if (!wifiEnabled) setWifiMode();
+}
 
-  // 初始化蓝牙
-  SerialBT.begin(deviceName); // 启动蓝牙串口，设备名为"ESP32_MPU6050"
-  Serial.println("蓝牙已启动");
-  Serial.print("设备名称: ");
-  Serial.println(deviceName);
-  Serial.println("请在电脑端搜索并配对此设备");
-  
-  delay(2000); // 等待蓝牙稳定
+void printStatus() {
+    Serial.println("=== STATUS ===");
+    Serial.print("BT: ");
+    Serial.println(btEnabled ? (SerialBT.hasClient() ? "connected" : "waiting") : "disabled");
+    Serial.print("WiFi: ");
+    Serial.println(wifiEnabled ? (client && client.connected() ? "client connected" : "AP running") : "disabled");
+    Serial.println("==============");
+}
+
+void handleSerialCommand() {
+    if (!Serial.available()) return;
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    if (cmd == "bt_only") {
+        setBtOnly();
+        Serial.println("Mode: BT only");
+    } else if (cmd == "wifi_only") {
+        setWifiOnly();
+        Serial.println("Mode: WiFi only");
+    } else if (cmd == "both") {
+        setBothMode();
+        Serial.println("Mode: both");
+    } else if (cmd == "status") {
+        printStatus();
+    } else if (cmd.length() > 0) {
+        Serial.print("Unknown: ");
+        Serial.println(cmd);
+        Serial.println("Commands: bt_only, wifi_only, both, status");
+    }
+}
+
+void setup() {
+    Serial.begin(115200);
+    Serial.println("ESP32 MPU6050 — Dual BT+WiFi");
+
+    Wire.begin(I2C_SDA, I2C_SCL);
+
+    if (!mpu.begin()) {
+        Serial.println("MPU6050 init failed!");
+        while (1) delay(10);
+    }
+    Serial.println("MPU6050 OK");
+
+    mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+
+    SerialBT.begin(btName);
+    Serial.println("BT started: ESP32_MPU6050");
+
+    WiFi.softAP(wifiSSID, wifiPass);
+    server.begin();
+    Serial.print("WiFi AP: ");
+    Serial.print(wifiSSID);
+    Serial.print(" @ ");
+    Serial.println(WiFi.softAPIP());
+    Serial.println("TCP server on port 8888");
+
+    Serial.println("Ready. Commands: bt_only, wifi_only, both, status");
 }
 
 void loop() {
-  unsigned long currentMillis = millis();
-  
-  // 按固定间隔发送数据
-  if (currentMillis - previousMillis >= sendInterval) {
-    previousMillis = currentMillis;
-    
-    // 读取传感器事件
+    // WiFi client handling
+    if (!client || !client.connected()) {
+        client = server.available();
+        if (client) Serial.println("WiFi client connected");
+    }
+
+    // Serial commands
+    handleSerialCommand();
+
+    // Sensor sampling at 20 Hz
+    unsigned long now = millis();
+    if (now - previousMillis < sendInterval) return;
+    previousMillis = now;
+
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
-    
-    // 格式化数据字符串
-    String dataString = "";
-    
-    // 加速度数据 (m/s²)
-    dataString += "ACC_X:";
-    dataString += String(a.acceleration.x, 2);
-    dataString += ",ACC_Y:";
-    dataString += String(a.acceleration.y, 2);
-    dataString += ",ACC_Z:";
-    dataString += String(a.acceleration.z, 2);
-    
-    // 陀螺仪数据 (rad/s)
-    dataString += ",GYRO_X:";
-    dataString += String(g.gyro.x, 2);
-    dataString += ",GYRO_Y:";
-    dataString += String(g.gyro.y, 2);
-    dataString += ",GYRO_Z:";
-    dataString += String(g.gyro.z, 2);
-    
-    // 温度数据 (°C)
-    dataString += ",TEMP:";
-    dataString += String(temp.temperature, 2);
-    dataString += "\n"; // 结尾换行符
-    
-    // 通过蓝牙发送数据
-    SerialBT.print(dataString);
-    
-    // 同时通过串口发送（用于调试）
-    Serial.print(dataString);
-  }
+
+    String data;
+    data += "ACC_X:"; data += String(a.acceleration.x, 2);
+    data += ",ACC_Y:"; data += String(a.acceleration.y, 2);
+    data += ",ACC_Z:"; data += String(a.acceleration.z, 2);
+    data += ",GYRO_X:"; data += String(g.gyro.x, 2);
+    data += ",GYRO_Y:"; data += String(g.gyro.y, 2);
+    data += ",GYRO_Z:"; data += String(g.gyro.z, 2);
+    data += ",TEMP:"; data += String(temp.temperature, 2);
+    data += "\n";
+
+    if (btEnabled) SerialBT.print(data);
+    if (wifiEnabled && client && client.connected()) client.print(data);
+    Serial.print(data);  // debug output always
 }
