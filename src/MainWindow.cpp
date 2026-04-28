@@ -132,8 +132,10 @@ void MainWindow::disconnectAll()
 {
     if (tcp_->isConnected())
         tcp_->disconnect();
+    wifiConnectBtn_->setEnabled(true);
     if (bt_->isConnected())
         bt_->disconnect();
+    btConnectBtn_->setEnabled(true);
 }
 
 void MainWindow::updateWifiButtonState()
@@ -236,6 +238,7 @@ void MainWindow::onScanClicked()
     deviceCombo_->clear();
     deviceCombo_->addItem("Scanning...");
     scanBtn_->setEnabled(false);
+    btConnectBtn_->setEnabled(false);
     statusLabel_->setText(" BT scanning...");
     bt_->startScan();
 }
@@ -247,7 +250,8 @@ void MainWindow::onBtConnectClicked()
         return;
     }
     int idx = deviceCombo_->currentIndex();
-    if (idx < 0) {
+    QString itemText = deviceCombo_->currentText();
+    if (idx < 0 || itemText == "Scanning..." || itemText == "No devices found") {
         QMessageBox::warning(this, "BT Connect", "No device selected.");
         return;
     }
@@ -289,6 +293,7 @@ void MainWindow::onDeviceDiscovered(const QBluetoothDeviceInfo &info)
 void MainWindow::onScanFinished()
 {
     scanBtn_->setEnabled(true);
+    btConnectBtn_->setEnabled(true);
     statusLabel_->setText(" BT idle");
     // Remove "Scanning..." placeholder (always at index 0)
     if (deviceCombo_->count() > 0 && deviceCombo_->itemText(0) == "Scanning...")
