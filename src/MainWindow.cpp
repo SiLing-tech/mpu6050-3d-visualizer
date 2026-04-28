@@ -241,9 +241,7 @@ void MainWindow::onTcpError(const QString &msg)
 void MainWindow::onScanClicked()
 {
     deviceCombo_->clear();
-    deviceCombo_->addItem("Scanning...");
     scanBtn_->setEnabled(false);
-    btConnectBtn_->setEnabled(false);
     statusLabel_->setText(" BT scanning...");
     bt_->startScan();
 }
@@ -254,29 +252,31 @@ void MainWindow::onBtConnectClicked()
         bt_->disconnect();
         return;
     }
-    int idx = deviceCombo_->currentIndex();
-    QString itemText = deviceCombo_->currentText();
-    if (idx < 0 || itemText == "Scanning..." || itemText == "No devices found") {
+    QString address = deviceCombo_->currentData().toString();
+    if (address.isEmpty()) {
         QMessageBox::warning(this, "BT Connect", "No device selected.");
         return;
     }
     btConnectBtn_->setEnabled(false);
+    scanBtn_->setEnabled(false);
     statusLabel_->setText(" BT connecting...");
-    bt_->connectToDevice(idx);
+    bt_->connectToDevice(address);
 }
 
 void MainWindow::onBtConnected()
 {
     btConnectBtn_->setText("Disconnect");
     btConnectBtn_->setEnabled(true);
+    scanBtn_->setEnabled(true);
     statusLabel_->setText(" BT connected");
-    statusBar()->showMessage("Bluetooth SPP connected");
+    statusBar()->showMessage("Bluetooth BLE connected");
 }
 
 void MainWindow::onBtDisconnected()
 {
     btConnectBtn_->setText("Connect");
     btConnectBtn_->setEnabled(true);
+    scanBtn_->setEnabled(true);
     statusLabel_->setText(" BT disconnected");
     statusBar()->showMessage("Bluetooth disconnected");
 }
@@ -292,18 +292,18 @@ void MainWindow::onBtError(const QString &msg)
 
 void MainWindow::onDeviceDiscovered(const QBluetoothDeviceInfo &info)
 {
-    deviceCombo_->addItem(info.name() + " [" + info.address().toString() + "]");
+    deviceCombo_->addItem(info.name() + " [" + info.address().toString() + "]",
+                          info.address().toString());
+    btConnectBtn_->setEnabled(true);
 }
 
 void MainWindow::onScanFinished()
 {
-    if (wifiModeActive_) return;   // ignore if in WiFi mode
+    if (wifiModeActive_) return;
+    // If connect is disabled, we're mid-connection — don't stomp state
+    if (!btConnectBtn_->isEnabled()) return;
     scanBtn_->setEnabled(true);
-    btConnectBtn_->setEnabled(true);
     statusLabel_->setText(" BT idle");
-    // Remove "Scanning..." placeholder (always at index 0)
-    if (deviceCombo_->count() > 0 && deviceCombo_->itemText(0) == "Scanning...")
-        deviceCombo_->removeItem(0);
     if (deviceCombo_->count() == 0)
         deviceCombo_->addItem("No devices found");
 }

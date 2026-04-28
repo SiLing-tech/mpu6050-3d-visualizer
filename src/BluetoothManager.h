@@ -7,6 +7,7 @@
 #include <QLowEnergyController>
 #include <QLowEnergyService>
 #include <QLowEnergyCharacteristic>
+#include <QTimer>
 #include <QVector>
 
 // Nordic UART Service (NUS) UUIDs
@@ -18,6 +19,8 @@ class BluetoothManager : public QObject {
     Q_OBJECT
 
     QBluetoothDeviceDiscoveryAgent *discovery_;
+    QTimer *scanTimer_;
+    QTimer *connectTimer_;
     QLowEnergyController *controller_ = nullptr;
     QLowEnergyService *uartService_ = nullptr;
     QLowEnergyCharacteristic txChar_;   // write to ESP32
@@ -26,13 +29,15 @@ class BluetoothManager : public QObject {
     QVector<QBluetoothDeviceInfo> devices_;
     QByteArray buffer_;
 
+    void cleanupConnection();
+
 public:
     explicit BluetoothManager(QObject *parent = nullptr);
     ~BluetoothManager() override;
 
     void startScan();
     void stopScan();
-    void connectToDevice(int deviceIndex);
+    void connectToDevice(const QString &address);
     void disconnect();
 
     const QVector<QBluetoothDeviceInfo> &discoveredDevices() const { return devices_; }
@@ -49,11 +54,13 @@ signals:
 private slots:
     void onDeviceDiscovered(const QBluetoothDeviceInfo &info);
     void onScanError(QBluetoothDeviceDiscoveryAgent::Error error);
+    void onScanTimeout();
 
     // BLE connection flow
     void onControllerConnected();
     void onControllerDisconnected();
     void onControllerError(QLowEnergyController::Error error);
+    void onConnectTimeout();
     void onServiceDiscovered(const QBluetoothUuid &serviceUuid);
     void onServiceStateChanged(QLowEnergyService::ServiceState state);
     void onCharacteristicChanged(const QLowEnergyCharacteristic &c, const QByteArray &value);
