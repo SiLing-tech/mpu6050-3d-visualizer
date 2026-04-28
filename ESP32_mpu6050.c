@@ -151,17 +151,14 @@ void loop() {
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
 
-    String data;
-    data += "ACC_X:"; data += String(a.acceleration.x, 2);
-    data += ",ACC_Y:"; data += String(a.acceleration.y, 2);
-    data += ",ACC_Z:"; data += String(a.acceleration.z, 2);
-    data += ",GYRO_X:"; data += String(g.gyro.x, 2);
-    data += ",GYRO_Y:"; data += String(g.gyro.y, 2);
-    data += ",GYRO_Z:"; data += String(g.gyro.z, 2);
-    data += ",TEMP:"; data += String(temp.temperature, 2);
-    data += "\n";
+    char buf[128];
+    snprintf(buf, sizeof(buf),
+        "ACC_X:%.2f,ACC_Y:%.2f,ACC_Z:%.2f,GYRO_X:%.2f,GYRO_Y:%.2f,GYRO_Z:%.2f,TEMP:%.2f\n",
+        a.acceleration.x, a.acceleration.y, a.acceleration.z,
+        g.gyro.x, g.gyro.y, g.gyro.z,
+        temp.temperature);
 
-    if (btEnabled) SerialBT.print(data);
-    if (wifiEnabled && client && client.connected()) client.print(data);
-    Serial.print(data);  // debug output always
+    if (btEnabled) SerialBT.print(buf);
+    if (wifiEnabled && client && client.connected()) client.print(buf);
+    Serial.print(buf);
 }
