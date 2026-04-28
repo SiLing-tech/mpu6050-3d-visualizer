@@ -6,12 +6,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Charts OpenGLWidgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Charts OpenGLWidgets Bluetooth)
 
 set(SOURCES
     src/main.cpp
     src/MainWindow.cpp
     src/TcpManager.cpp
+    src/BluetoothManager.cpp
     src/SensorDataParser.cpp
     src/ChartPanel.cpp
     src/AttitudeEstimator.cpp
@@ -22,6 +23,7 @@ set(SOURCES
 set(HEADERS
     src/MainWindow.h
     src/TcpManager.h
+    src/BluetoothManager.h
     src/SensorData.h
     src/SensorDataParser.h
     src/ChartPanel.h
@@ -39,6 +41,7 @@ target_link_libraries(mpu6050_visualizer PRIVATE
     Qt6::Core
     Qt6::Widgets
     Qt6::Network
+    Qt6::Bluetooth
     Qt6::Charts
     Qt6::OpenGLWidgets
 )
