@@ -2,6 +2,7 @@
 
 #include <QSplitter>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QStatusBar>
 #include <QMessageBox>
 #include <QIntValidator>
@@ -9,6 +10,7 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , tcp_(new TcpManager(this))
+    , bt_(new BluetoothManager(this))
 {
     setupUi();
     setupToolbar();
@@ -19,7 +21,17 @@ MainWindow::MainWindow(QWidget *parent)
     connect(tcp_, &TcpManager::errorOccurred, this, &MainWindow::onTcpError);
     connect(tcp_, &TcpManager::newLineParsed, this, &MainWindow::onNewLine);
 
-    statusBar()->showMessage("Ready — WiFi TCP + Charts");
+    // BT signals
+    connect(bt_, &BluetoothManager::connected, this, &MainWindow::onBtConnected);
+    connect(bt_, &BluetoothManager::disconnected, this, &MainWindow::onBtDisconnected);
+    connect(bt_, &BluetoothManager::errorOccurred, this, &MainWindow::onBtError);
+    connect(bt_, &BluetoothManager::newLineParsed, this, &MainWindow::onNewLine);
+    connect(bt_, &BluetoothManager::deviceDiscovered, this, &MainWindow::onDeviceDiscovered);
+    connect(bt_, &BluetoothManager::scanFinished, this, &MainWindow::onScanFinished);
+
+    // Default: WiFi mode visible, BT hidden
+    onSwitchToWifi();
+    statusBar()->showMessage("Ready — WiFi + Bluetooth");
 }
 
 void MainWindow::setupUi()
@@ -54,31 +66,121 @@ void MainWindow::setupToolbar()
 {
     auto *toolbar = addToolBar("Connection");
 
+    // --- Mode toggle buttons ---
+    wifiModeBtn_ = new QPushButton("WiFi", this);
+    wifiModeBtn_->setCheckable(false);
+    toolbar->addWidget(wifiModeBtn_);
+
+    btModeBtn_ = new QPushButton("BT", this);
+    btModeBtn_->setCheckable(false);
+    toolbar->addWidget(btModeBtn_);
+
+    toolbar->addSeparator();
+
     // --- WiFi group ---
-    QLabel *wifiLabel = new QLabel(" WiFi:");
-    toolbar->addWidget(wifiLabel);
-
-    wifiIp_ = new QLineEdit("192.168.4.1", this);
+    wifiGroup_ = new QWidget(this);
+    auto *wifiLayout = new QHBoxLayout();
+    wifiLayout->setContentsMargins(0, 0, 0, 0);
+    wifiLayout->addWidget(new QLabel("IP:"));
+    wifiIp_ = new QLineEdit("192.168.4.1");
     wifiIp_->setMaximumWidth(120);
-    toolbar->addWidget(wifiIp_);
-
-    QLabel *portLabel = new QLabel(":");
-    toolbar->addWidget(portLabel);
-
-    wifiPort_ = new QLineEdit("8888", this);
+    wifiLayout->addWidget(wifiIp_);
+    wifiLayout->addWidget(new QLabel(":"));
+    wifiPort_ = new QLineEdit("8888");
     wifiPort_->setMaximumWidth(55);
     wifiPort_->setValidator(new QIntValidator(1, 65535, this));
-    toolbar->addWidget(wifiPort_);
+    wifiLayout->addWidget(wifiPort_);
+    wifiConnectBtn_ = new QPushButton("Connect");
+    wifiLayout->addWidget(wifiConnectBtn_);
+    wifiGroup_->setLayout(wifiLayout);
+    toolbar->addWidget(wifiGroup_);
 
-    wifiConnectBtn_ = new QPushButton("Connect", this);
-    toolbar->addWidget(wifiConnectBtn_);
+    // --- BT group ---
+    btGroup_ = new QWidget(this);
+    auto *btLayout = new QHBoxLayout();
+    btLayout->setContentsMargins(0, 0, 0, 0);
+    scanBtn_ = new QPushButton("Scan");
+    btLayout->addWidget(scanBtn_);
+    deviceCombo_ = new QComboBox();
+    deviceCombo_->setMinimumWidth(160);
+    btLayout->addWidget(deviceCombo_);
+    btConnectBtn_ = new QPushButton("Connect");
+    btLayout->addWidget(btConnectBtn_);
+    btGroup_->setLayout(btLayout);
+    toolbar->addWidget(btGroup_);
 
     toolbar->addSeparator();
 
     statusLabel_ = new QLabel(" Idle");
     toolbar->addWidget(statusLabel_);
 
+    // Mode switch connections
+    connect(wifiModeBtn_, &QPushButton::clicked, this, &MainWindow::onSwitchToWifi);
+    connect(btModeBtn_, &QPushButton::clicked, this, &MainWindow::onSwitchToBt);
+
+    // WiFi connections
     connect(wifiConnectBtn_, &QPushButton::clicked, this, &MainWindow::onWifiConnectClicked);
+
+    // BT connections
+    connect(scanBtn_, &QPushButton::clicked, this, &MainWindow::onScanClicked);
+    connect(btConnectBtn_, &QPushButton::clicked, this, &MainWindow::onBtConnectClicked);
+}
+
+// --- Helpers ---
+
+void MainWindow::disconnectAll()
+{
+    if (tcp_->isConnected())
+        tcp_->disconnect();
+    if (bt_->isConnected())
+        bt_->disconnect();
+}
+
+void MainWindow::updateWifiButtonState()
+{
+    if (tcp_->isConnected()) {
+        wifiConnectBtn_->setText("Disconnect");
+        statusLabel_->setText(" WiFi connected");
+    } else {
+        wifiConnectBtn_->setText("Connect");
+        statusLabel_->setText(" WiFi idle");
+    }
+}
+
+void MainWindow::updateBtButtonState()
+{
+    if (bt_->isConnected()) {
+        btConnectBtn_->setText("Disconnect");
+        statusLabel_->setText(" BT connected");
+    } else {
+        btConnectBtn_->setText("Connect");
+        scanBtn_->setEnabled(true);
+        statusLabel_->setText(" BT idle");
+    }
+}
+
+// --- Mode switching ---
+
+void MainWindow::onSwitchToWifi()
+{
+    disconnectAll();
+    wifiGroup_->setVisible(true);
+    btGroup_->setVisible(false);
+    wifiModeBtn_->setStyleSheet("background:#2196F3; color:white; font-weight:bold;");
+    btModeBtn_->setStyleSheet("");
+    updateWifiButtonState();
+    statusBar()->showMessage("Switched to WiFi mode");
+}
+
+void MainWindow::onSwitchToBt()
+{
+    disconnectAll();
+    wifiGroup_->setVisible(false);
+    btGroup_->setVisible(true);
+    btModeBtn_->setStyleSheet("background:#2196F3; color:white; font-weight:bold;");
+    wifiModeBtn_->setStyleSheet("");
+    updateBtButtonState();
+    statusBar()->showMessage("Switched to Bluetooth mode");
 }
 
 // --- WiFi/TCP slots ---
@@ -125,6 +227,73 @@ void MainWindow::onTcpError(const QString &msg)
     statusLabel_->setText(" WiFi error");
     statusBar()->showMessage("WiFi Error: " + msg);
     QMessageBox::critical(this, "WiFi Error", msg);
+}
+
+// --- BT slots ---
+
+void MainWindow::onScanClicked()
+{
+    deviceCombo_->clear();
+    deviceCombo_->addItem("Scanning...");
+    scanBtn_->setEnabled(false);
+    statusLabel_->setText(" BT scanning...");
+    bt_->startScan();
+}
+
+void MainWindow::onBtConnectClicked()
+{
+    if (bt_->isConnected()) {
+        bt_->disconnect();
+        return;
+    }
+    int idx = deviceCombo_->currentIndex();
+    if (idx < 0) {
+        QMessageBox::warning(this, "BT Connect", "No device selected.");
+        return;
+    }
+    btConnectBtn_->setEnabled(false);
+    statusLabel_->setText(" BT connecting...");
+    bt_->connectToDevice(idx);
+}
+
+void MainWindow::onBtConnected()
+{
+    btConnectBtn_->setText("Disconnect");
+    btConnectBtn_->setEnabled(true);
+    statusLabel_->setText(" BT connected");
+    statusBar()->showMessage("Bluetooth SPP connected");
+}
+
+void MainWindow::onBtDisconnected()
+{
+    btConnectBtn_->setText("Connect");
+    btConnectBtn_->setEnabled(true);
+    statusLabel_->setText(" BT disconnected");
+    statusBar()->showMessage("Bluetooth disconnected");
+}
+
+void MainWindow::onBtError(const QString &msg)
+{
+    btConnectBtn_->setEnabled(true);
+    scanBtn_->setEnabled(true);
+    statusLabel_->setText(" BT error");
+    statusBar()->showMessage("BT Error: " + msg);
+    QMessageBox::critical(this, "BT Error", msg);
+}
+
+void MainWindow::onDeviceDiscovered(const QBluetoothDeviceInfo &info)
+{
+    deviceCombo_->addItem(info.name() + " [" + info.address().toString() + "]");
+}
+
+void MainWindow::onScanFinished()
+{
+    scanBtn_->setEnabled(true);
+    statusLabel_->setText(" BT idle");
+    if (deviceCombo_->count() == 1 && deviceCombo_->itemText(0) == "Scanning...")
+        deviceCombo_->clear();
+    if (deviceCombo_->count() == 0)
+        deviceCombo_->addItem("No devices found");
 }
 
 // --- Data ---
