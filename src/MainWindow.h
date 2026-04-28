@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QMainWindow>
-#include <QLabel>
 #include <QPushButton>
 #include <QLineEdit>
 #include <QPlainTextEdit>
@@ -38,9 +37,7 @@ class MainWindow : public QMainWindow {
     QComboBox *deviceCombo_;
     QPushButton *btConnectBtn_;
 
-    QLabel *statusLabel_;
-
-    bool wifiModeActive_ = false;  // tracks current mode (not widget visibility)
+    bool wifiModeActive_ = false;
 
     AttitudeEstimator estimator_{0.1f};
 
@@ -79,6 +76,4 @@ private:
     void setupUi();
     void setupToolbar();
     void disconnectAll();
-    void updateWifiButtonState();
-    void updateBtButtonState();
 };

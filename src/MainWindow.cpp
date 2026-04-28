@@ -6,6 +6,7 @@
 #include <QStatusBar>
 #include <QMessageBox>
 #include <QIntValidator>
+#include <QLabel>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -31,7 +32,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Default: WiFi mode visible, BT hidden
     onSwitchToWifi();
-    statusBar()->showMessage("Ready — WiFi + Bluetooth");
+    statusBar()->showMessage("Ready — WiFi + Bluetooth", 0);
 }
 
 void MainWindow::setupUi()
@@ -109,11 +110,6 @@ void MainWindow::setupToolbar()
     btGroup_->setLayout(btLayout);
     toolbar->addWidget(btGroup_);
 
-    toolbar->addSeparator();
-
-    statusLabel_ = new QLabel(" Idle");
-    toolbar->addWidget(statusLabel_);
-
     // Mode switch connections
     connect(wifiModeBtn_, &QPushButton::clicked, this, &MainWindow::onSwitchToWifi);
     connect(btModeBtn_, &QPushButton::clicked, this, &MainWindow::onSwitchToBt);
@@ -126,68 +122,32 @@ void MainWindow::setupToolbar()
     connect(btConnectBtn_, &QPushButton::clicked, this, &MainWindow::onBtConnectClicked);
 }
 
-// --- Helpers ---
-
-void MainWindow::disconnectAll()
-{
-    if (tcp_->isConnected())
-        tcp_->disconnect();
-    wifiConnectBtn_->setEnabled(true);
-    bt_->stopScan();
-    if (bt_->isConnected())
-        bt_->disconnect();
-    btConnectBtn_->setEnabled(true);
-}
-
-void MainWindow::updateWifiButtonState()
-{
-    if (tcp_->isConnected()) {
-        wifiConnectBtn_->setText("Disconnect");
-        statusLabel_->setText(" WiFi connected");
-    } else {
-        wifiConnectBtn_->setText("Connect");
-        statusLabel_->setText(" WiFi idle");
-    }
-}
-
-void MainWindow::updateBtButtonState()
-{
-    if (bt_->isConnected()) {
-        btConnectBtn_->setText("Disconnect");
-        statusLabel_->setText(" BT connected");
-    } else {
-        btConnectBtn_->setText("Connect");
-        scanBtn_->setEnabled(true);
-        statusLabel_->setText(" BT idle");
-    }
-}
-
 // --- Mode switching ---
 
 void MainWindow::onSwitchToWifi()
 {
-    if (wifiModeActive_) return;  // already in WiFi mode
+    if (wifiModeActive_) return;
     disconnectAll();
     wifiGroup_->setVisible(true);
     btGroup_->setVisible(false);
     wifiModeBtn_->setStyleSheet("background:#2196F3; color:white; font-weight:bold;");
     btModeBtn_->setStyleSheet("");
     wifiModeActive_ = true;
-    updateWifiButtonState();
-    statusBar()->showMessage("Switched to WiFi mode");
+    wifiConnectBtn_->setText("Connect");
+    statusBar()->showMessage("WiFi mode", 0);
 }
 
 void MainWindow::onSwitchToBt()
 {
-    if (!wifiModeActive_) return;    // already in BT mode
+    if (!wifiModeActive_) return;
     disconnectAll();
     wifiGroup_->setVisible(false);
     btGroup_->setVisible(true);
     btModeBtn_->setStyleSheet("background:#2196F3; color:white; font-weight:bold;");
     wifiModeBtn_->setStyleSheet("");
     wifiModeActive_ = false;
-    updateBtButtonState();
-    statusBar()->showMessage("Switched to Bluetooth mode");
+    statusBar()->showMessage("BT mode — scanning...", 0);
+    onScanClicked();
 }
 
 // --- WiFi/TCP slots ---
@@ -196,6 +156,7 @@ void MainWindow::onWifiConnectClicked()
 {
     if (tcp_->isConnected()) {
         tcp_->disconnect();
+        statusBar()->showMessage("WiFi disconnected", 5000);
         return;
     }
 
@@ -208,7 +169,7 @@ void MainWindow::onWifiConnectClicked()
     }
 
     wifiConnectBtn_->setEnabled(false);
-    statusLabel_->setText(" WiFi connecting...");
+    statusBar()->showMessage("WiFi connecting...", 0);
     tcp_->connectToHost(ip, port);
 }
 
@@ -216,23 +177,20 @@ void MainWindow::onTcpConnected()
 {
     wifiConnectBtn_->setText("Disconnect");
     wifiConnectBtn_->setEnabled(true);
-    statusLabel_->setText(" WiFi connected");
-    statusBar()->showMessage("WiFi/TCP connected");
+    statusBar()->showMessage("WiFi connected", 0);
 }
 
 void MainWindow::onTcpDisconnected()
 {
     wifiConnectBtn_->setText("Connect");
     wifiConnectBtn_->setEnabled(true);
-    statusLabel_->setText(" WiFi disconnected");
-    statusBar()->showMessage("WiFi/TCP disconnected");
+    statusBar()->showMessage("WiFi disconnected", 5000);
 }
 
 void MainWindow::onTcpError(const QString &msg)
 {
     wifiConnectBtn_->setEnabled(true);
-    statusLabel_->setText(" WiFi error");
-    statusBar()->showMessage("WiFi Error: " + msg);
+    statusBar()->showMessage("WiFi Error: " + msg, 0);
     QMessageBox::critical(this, "WiFi Error", msg);
 }
 
@@ -242,7 +200,8 @@ void MainWindow::onScanClicked()
 {
     deviceCombo_->clear();
     scanBtn_->setEnabled(false);
-    statusLabel_->setText(" BT scanning...");
+    btConnectBtn_->setEnabled(false);
+    statusBar()->showMessage("BT scanning...", 0);
     bt_->startScan();
 }
 
@@ -250,6 +209,7 @@ void MainWindow::onBtConnectClicked()
 {
     if (bt_->isConnected()) {
         bt_->disconnect();
+        statusBar()->showMessage("Bluetooth disconnected", 5000);
         return;
     }
     QString address = deviceCombo_->currentData().toString();
@@ -259,7 +219,7 @@ void MainWindow::onBtConnectClicked()
     }
     btConnectBtn_->setEnabled(false);
     scanBtn_->setEnabled(false);
-    statusLabel_->setText(" BT connecting...");
+    statusBar()->showMessage("BT connecting...", 0);
     bt_->connectToDevice(address);
 }
 
@@ -268,8 +228,7 @@ void MainWindow::onBtConnected()
     btConnectBtn_->setText("Disconnect");
     btConnectBtn_->setEnabled(true);
     scanBtn_->setEnabled(true);
-    statusLabel_->setText(" BT connected");
-    statusBar()->showMessage("Bluetooth BLE connected");
+    statusBar()->showMessage("Bluetooth BLE connected", 0);
 }
 
 void MainWindow::onBtDisconnected()
@@ -277,16 +236,14 @@ void MainWindow::onBtDisconnected()
     btConnectBtn_->setText("Connect");
     btConnectBtn_->setEnabled(true);
     scanBtn_->setEnabled(true);
-    statusLabel_->setText(" BT disconnected");
-    statusBar()->showMessage("Bluetooth disconnected");
+    statusBar()->showMessage("Bluetooth disconnected", 5000);
 }
 
 void MainWindow::onBtError(const QString &msg)
 {
     btConnectBtn_->setEnabled(true);
     scanBtn_->setEnabled(true);
-    statusLabel_->setText(" BT error");
-    statusBar()->showMessage("BT Error: " + msg);
+    statusBar()->showMessage("BT Error: " + msg, 0);
     QMessageBox::critical(this, "BT Error", msg);
 }
 
@@ -300,12 +257,23 @@ void MainWindow::onDeviceDiscovered(const QBluetoothDeviceInfo &info)
 void MainWindow::onScanFinished()
 {
     if (wifiModeActive_) return;
-    // If connect is disabled, we're mid-connection — don't stomp state
-    if (!btConnectBtn_->isEnabled()) return;
+    if (!btConnectBtn_->isEnabled()) return;   // mid-connection
     scanBtn_->setEnabled(true);
-    statusLabel_->setText(" BT idle");
+    btConnectBtn_->setEnabled(true);
+    statusBar()->showMessage("BT scan complete", 5000);
     if (deviceCombo_->count() == 0)
         deviceCombo_->addItem("No devices found");
+}
+
+void MainWindow::disconnectAll()
+{
+    if (tcp_->isConnected())
+        tcp_->disconnect();
+    wifiConnectBtn_->setEnabled(true);
+    bt_->stopScan();
+    if (bt_->isConnected())
+        bt_->disconnect();
+    btConnectBtn_->setEnabled(true);
 }
 
 // --- Data ---

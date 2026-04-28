@@ -89,6 +89,7 @@ void BluetoothManager::cleanupConnection()
         uartService_ = nullptr;
     }
     if (controller_) {
+        controller_->disconnect();       // break all signals — no callbacks during cleanup
         controller_->disconnectFromDevice();
         delete controller_;
         controller_ = nullptr;
@@ -106,8 +107,7 @@ void BluetoothManager::disconnect()
     }
     if (controller_) {
         controller_->disconnectFromDevice();
-        delete controller_;
-        controller_ = nullptr;
+        // onControllerDisconnected() handles delete and emits disconnected()
     }
 }
 
@@ -160,10 +160,10 @@ void BluetoothManager::onControllerDisconnected()
 {
     qDebug() << "BLE controller disconnected";
     connectTimer_->stop();
-    if (uartService_) {
-        delete uartService_;
-        uartService_ = nullptr;
-    }
+    delete uartService_;
+    uartService_ = nullptr;
+    delete controller_;
+    controller_ = nullptr;
     emit disconnected();
 }
 
