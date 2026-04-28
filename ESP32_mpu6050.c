@@ -1,22 +1,55 @@
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
-#include <BluetoothSerial.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 #include <WiFi.h>
 
-#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
-#error Bluetooth is not enabled! Run `make menuconfig` to enable it
-#endif
+// --- Nordic UART Service (NUS) UUIDs ---
+#define NUS_SERVICE_UUID "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+#define NUS_TX_UUID      "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  // PC -> ESP32 (write)
+#define NUS_RX_UUID      "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  // ESP32 -> PC (notify)
 
 // --- Mode flags ---
 bool btEnabled = true;
 bool wifiEnabled = true;
+bool bleConnected = false;
 
 // --- Hardware ---
 Adafruit_MPU6050 mpu;
-BluetoothSerial SerialBT;
 WiFiServer server(8888);
 WiFiClient client;
+
+// --- BLE ---
+BLEServer *bleServer = nullptr;
+BLEService *nusService = nullptr;
+BLECharacteristic *rxChar = nullptr;   // ESP32 -> PC (notify)
+BLECharacteristic *txChar = nullptr;   // PC -> ESP32 (write)
+
+// --- BLE Server Callbacks ---
+class ServerCallbacks : public BLEServerCallbacks {
+    void onConnect(BLEServer *s) {
+        bleConnected = true;
+        Serial.println("BLE client connected");
+    }
+    void onDisconnect(BLEServer *s) {
+        bleConnected = false;
+        Serial.println("BLE client disconnected");
+        // Restart advertising so PC can reconnect
+        BLEDevice::startAdvertising();
+    }
+};
+
+// --- BLE TX Characteristic Callbacks (data from PC) ---
+class TxCallbacks : public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *c) {
+        // We currently don't process incoming BLE data, but this is ready if needed
+        Serial.print("BLE RX: ");
+        Serial.println(c->getValue().c_str());
+    }
+};
 
 // --- I2C pins ---
 #define I2C_SDA 21
@@ -31,12 +64,51 @@ const char* wifiSSID = "ESP32_MPU6050";
 const char* wifiPass = "12345678";
 const char* btName = "ESP32_MPU6050";
 
+// --- BLE setup ---
+void setupBLE() {
+    BLEDevice::init(btName);
+    bleServer = BLEDevice::createServer();
+    bleServer->setCallbacks(new ServerCallbacks());
+
+    nusService = bleServer->createService(NUS_SERVICE_UUID);
+
+    // RX: ESP32 -> PC (notify)
+    rxChar = nusService->createCharacteristic(NUS_RX_UUID, BLECharacteristic::PROPERTY_NOTIFY);
+    rxChar->addDescriptor(new BLE2902());
+
+    // TX: PC -> ESP32 (write)
+    txChar = nusService->createCharacteristic(NUS_TX_UUID, BLECharacteristic::PROPERTY_WRITE);
+    txChar->setCallbacks(new TxCallbacks());
+
+    nusService->start();
+
+    // Start advertising
+    BLEAdvertising *adv = BLEDevice::getAdvertising();
+    adv->addServiceUUID(NUS_SERVICE_UUID);
+    adv->setScanResponse(true);
+    adv->setMinPreferred(0x06);
+    adv->setMinPreferred(0x12);
+    BLEDevice::startAdvertising();
+
+    btEnabled = true;
+    bleConnected = false;
+    Serial.println("BLE NUS started: ESP32_MPU6050");
+}
+
+void stopBLE() {
+    BLEDevice::stopAdvertising();
+    if (bleServer) {
+        bleServer->getAdvertising()->stop();
+    }
+    btEnabled = false;
+    bleConnected = false;
+    Serial.println("BLE disabled");
+}
+
 // --- Mode switching ---
 void setBtMode() {
     if (btEnabled) return;
-    SerialBT.begin(btName);
-    btEnabled = true;
-    Serial.println("BT restarted");
+    setupBLE();
 }
 
 void setWifiMode() {
@@ -65,17 +137,15 @@ void setBtOnly() {
 
 void setWifiOnly() {
     if (btEnabled) {
-        SerialBT.end();
-        btEnabled = false;
-        Serial.println("BT disabled");
+        stopBLE();
     }
     if (!wifiEnabled) setWifiMode();
 }
 
 void printStatus() {
     Serial.println("=== STATUS ===");
-    Serial.print("BT: ");
-    Serial.println(btEnabled ? (SerialBT.hasClient() ? "connected" : "waiting") : "disabled");
+    Serial.print("BT (BLE): ");
+    Serial.println(btEnabled ? (bleConnected ? "connected" : "advertising") : "disabled");
     Serial.print("WiFi: ");
     Serial.println(wifiEnabled ? (client && client.connected() ? "client connected" : "AP running") : "disabled");
     Serial.println("==============");
@@ -105,7 +175,7 @@ void handleSerialCommand() {
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("ESP32 MPU6050 — Dual BT+WiFi");
+    Serial.println("ESP32 MPU6050 — Dual BLE+WiFi");
 
     Wire.begin(I2C_SDA, I2C_SCL);
 
@@ -119,8 +189,7 @@ void setup() {
     mpu.setGyroRange(MPU6050_RANGE_500_DEG);
     mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
-    SerialBT.begin(btName);
-    Serial.println("BT started: ESP32_MPU6050");
+    setupBLE();
 
     WiFi.softAP(wifiSSID, wifiPass);
     server.begin();
@@ -158,7 +227,10 @@ void loop() {
         g.gyro.x, g.gyro.y, g.gyro.z,
         temp.temperature);
 
-    if (btEnabled) SerialBT.print(buf);
+    if (btEnabled && bleConnected) {
+        rxChar->setValue(buf);
+        rxChar->notify();
+    }
     if (wifiEnabled && client && client.connected()) client.print(buf);
     Serial.print(buf);
 }

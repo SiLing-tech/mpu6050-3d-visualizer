@@ -4,32 +4,13 @@
 BluetoothManager::BluetoothManager(QObject *parent)
     : QObject(parent)
     , discovery_(new QBluetoothDeviceDiscoveryAgent(this))
-    , socket_(new QBluetoothSocket(QBluetoothServiceInfo::RfcommProtocol, this))
-    , localDevice_(new QBluetoothLocalDevice(this))
 {
-    // Scan errors
     connect(discovery_, &QBluetoothDeviceDiscoveryAgent::errorOccurred,
             this, &BluetoothManager::onScanError);
-
-    // Device discovery
     connect(discovery_, &QBluetoothDeviceDiscoveryAgent::deviceDiscovered,
             this, &BluetoothManager::onDeviceDiscovered);
     connect(discovery_, &QBluetoothDeviceDiscoveryAgent::finished,
             this, &BluetoothManager::scanFinished);
-
-    // Socket events
-    connect(socket_, &QBluetoothSocket::connected,
-            this, &BluetoothManager::onSocketConnected);
-    connect(socket_, &QBluetoothSocket::disconnected,
-            this, &BluetoothManager::onSocketDisconnected);
-    connect(socket_, &QBluetoothSocket::readyRead,
-            this, &BluetoothManager::onReadyRead);
-    connect(socket_, &QBluetoothSocket::errorOccurred,
-            this, &BluetoothManager::onSocketErrorOccurred);
-
-    // Pairing
-    connect(localDevice_, &QBluetoothLocalDevice::pairingFinished,
-            this, &BluetoothManager::onPairingFinished);
 }
 
 BluetoothManager::~BluetoothManager()
@@ -40,7 +21,7 @@ BluetoothManager::~BluetoothManager()
 void BluetoothManager::startScan()
 {
     devices_.clear();
-    discovery_->start(QBluetoothDeviceDiscoveryAgent::ClassicMethod);
+    discovery_->start(QBluetoothDeviceDiscoveryAgent::LowEnergyMethod);
 }
 
 void BluetoothManager::stopScan()
@@ -55,69 +36,151 @@ void BluetoothManager::connectToDevice(int deviceIndex)
         return;
     }
 
-    const QBluetoothDeviceInfo &info = devices_[deviceIndex];
-
-    // Ensure device is paired (Windows requires pairing for SPP)
-    QBluetoothLocalDevice::Pairing pairing = localDevice_->pairingStatus(info.address());
-    if (pairing != QBluetoothLocalDevice::Paired
-        && pairing != QBluetoothLocalDevice::AuthorizedPaired) {
-        qDebug() << "Requesting pairing with" << info.name();
-        localDevice_->requestPairing(info.address(), QBluetoothLocalDevice::Paired);
-        return;  // will retry in onPairingFinished
+    // Clean up previous connection if any
+    if (controller_) {
+        controller_->disconnectFromDevice();
+        delete controller_;
+        controller_ = nullptr;
     }
+    uartService_ = nullptr;
+    txChar_ = QLowEnergyCharacteristic();
+    rxChar_ = QLowEnergyCharacteristic();
 
-    // Connect using standard SPP UUID
-    static const QBluetoothUuid sppUuid(QBluetoothUuid::ServiceClassUuid::SerialPort);
-    qDebug() << "Connecting to" << info.name() << "SPP UUID:" << sppUuid.toString();
-    socket_->connectToService(info.address(), sppUuid);
+    targetDevice_ = devices_[deviceIndex];
+    qDebug() << "BLE connecting to" << targetDevice_.name() << targetDevice_.address().toString();
+
+    controller_ = QLowEnergyController::createCentral(targetDevice_, this);
+    connect(controller_, &QLowEnergyController::connected,
+            this, &BluetoothManager::onControllerConnected);
+    connect(controller_, &QLowEnergyController::disconnected,
+            this, &BluetoothManager::onControllerDisconnected);
+    connect(controller_, &QLowEnergyController::errorOccurred,
+            this, &BluetoothManager::onControllerError);
+    connect(controller_, &QLowEnergyController::serviceDiscovered,
+            this, &BluetoothManager::onServiceDiscovered);
+
+    controller_->connectToDevice();
 }
 
 void BluetoothManager::disconnect()
 {
-    if (socket_->state() == QBluetoothSocket::SocketState::ConnectedState)
-        socket_->disconnectFromService();
+    if (uartService_) {
+        delete uartService_;
+        uartService_ = nullptr;
+    }
+    if (controller_) {
+        controller_->disconnectFromDevice();
+    }
 }
 
 bool BluetoothManager::isConnected() const
 {
-    return socket_->state() == QBluetoothSocket::SocketState::ConnectedState;
+    return controller_ && controller_->state() == QLowEnergyController::ConnectedState;
 }
+
+// --- Scan ---
 
 void BluetoothManager::onDeviceDiscovered(const QBluetoothDeviceInfo &info)
 {
-    qDebug() << "BT device found:" << info.name()
-             << info.address().toString()
-             << "rssi:" << info.rssi();
-
     if (info.name().isEmpty())
         return;
 
+    qDebug() << "BLE device found:" << info.name() << info.address().toString();
+
+    // BLE devices may be discovered multiple times; deduplicate by address
+    for (const auto &d : devices_) {
+        if (d.address() == info.address())
+            return;
+    }
     devices_.append(info);
     emit deviceDiscovered(info);
 }
 
 void BluetoothManager::onScanError(QBluetoothDeviceDiscoveryAgent::Error error)
 {
-    qDebug() << "BT scan error:" << error;
+    qDebug() << "BLE scan error:" << error << discovery_->errorString();
     emit errorOccurred(discovery_->errorString());
 }
 
-void BluetoothManager::onSocketConnected()
+// --- BLE Connection ---
+
+void BluetoothManager::onControllerConnected()
 {
-    qDebug() << "BT socket connected";
-    buffer_.clear();
-    emit connected();
+    qDebug() << "BLE controller connected, discovering services...";
+    controller_->discoverServices();
 }
 
-void BluetoothManager::onSocketDisconnected()
+void BluetoothManager::onControllerDisconnected()
 {
-    qDebug() << "BT socket disconnected";
+    qDebug() << "BLE controller disconnected";
+    if (uartService_) {
+        delete uartService_;
+        uartService_ = nullptr;
+    }
     emit disconnected();
 }
 
-void BluetoothManager::onReadyRead()
+void BluetoothManager::onControllerError(QLowEnergyController::Error error)
 {
-    buffer_.append(socket_->readAll());
+    qDebug() << "BLE controller error:" << error << controller_->errorString();
+    emit errorOccurred(controller_->errorString());
+}
+
+void BluetoothManager::onServiceDiscovered(const QBluetoothUuid &serviceUuid)
+{
+    qDebug() << "BLE service discovered:" << serviceUuid.toString();
+    if (serviceUuid == NUS_SERVICE_UUID) {
+        qDebug() << "Found NUS service";
+        uartService_ = controller_->createServiceObject(serviceUuid, this);
+        if (uartService_) {
+            connect(uartService_, &QLowEnergyService::stateChanged,
+                    this, &BluetoothManager::onServiceStateChanged);
+            connect(uartService_, &QLowEnergyService::characteristicChanged,
+                    this, &BluetoothManager::onCharacteristicChanged);
+            connect(uartService_, &QLowEnergyService::characteristicWritten,
+                    this, &BluetoothManager::onCharacteristicWritten);
+            uartService_->discoverDetails();
+        }
+    }
+}
+
+void BluetoothManager::onServiceStateChanged(QLowEnergyService::ServiceState state)
+{
+    qDebug() << "NUS service state:" << state;
+    if (state != QLowEnergyService::RemoteServiceDiscovered)
+        return;
+
+    // Find TX and RX characteristics
+    const QList<QLowEnergyCharacteristic> chars = uartService_->characteristics();
+    for (const auto &c : chars) {
+        qDebug() << "  char:" << c.uuid().toString();
+        if (c.uuid() == NUS_RX_UUID) {
+            rxChar_ = c;
+            // Enable notifications on RX characteristic
+            QLowEnergyDescriptor cccd = c.descriptor(QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration);
+            if (cccd.isValid()) {
+                uartService_->writeDescriptor(cccd, QByteArray::fromHex("0100"));
+                qDebug() << "  RX notify enabled";
+            }
+        } else if (c.uuid() == NUS_TX_UUID) {
+            txChar_ = c;
+            qDebug() << "  TX char found";
+        }
+    }
+
+    if (rxChar_.isValid()) {
+        buffer_.clear();
+        emit connected();
+    } else {
+        qDebug() << "  NUS RX characteristic not found!";
+        emit errorOccurred("NUS RX characteristic not found");
+    }
+}
+
+void BluetoothManager::onCharacteristicChanged(const QLowEnergyCharacteristic &c, const QByteArray &value)
+{
+    Q_UNUSED(c)
+    buffer_.append(value);
 
     while (true) {
         int idx = buffer_.indexOf('\n');
@@ -132,29 +195,9 @@ void BluetoothManager::onReadyRead()
     }
 }
 
-void BluetoothManager::onSocketErrorOccurred(QBluetoothSocket::SocketError error)
+void BluetoothManager::onCharacteristicWritten(const QLowEnergyCharacteristic &c, const QByteArray &value)
 {
-    Q_UNUSED(error)
-    qDebug() << "BT socket error:" << socket_->errorString();
-    emit errorOccurred(socket_->errorString());
-}
-
-void BluetoothManager::onPairingFinished(QBluetoothAddress address, QBluetoothLocalDevice::Pairing pairing)
-{
-    qDebug() << "Pairing finished:" << address.toString()
-             << "status:" << pairing;
-
-    if (pairing == QBluetoothLocalDevice::Paired
-        || pairing == QBluetoothLocalDevice::AuthorizedPaired) {
-        // Retry connection now that device is paired
-        for (int i = 0; i < devices_.size(); ++i) {
-            if (devices_[i].address() == address) {
-                static const QBluetoothUuid sppUuid(QBluetoothUuid::ServiceClassUuid::SerialPort);
-                socket_->connectToService(address, sppUuid);
-                return;
-            }
-        }
-    } else {
-        emit errorOccurred("Pairing failed: " + address.toString());
-    }
+    Q_UNUSED(c)
+    Q_UNUSED(value)
+    // Write acknowledged; nothing needed
 }
