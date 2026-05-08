@@ -17,6 +17,15 @@ CMakeLists.txt.user
 *.qm
 *.dll
 
+# Claude Code
+.claude/
+
+# Superpowers
+.superpowers/
+
+# Qt Creator
+.qtcreator/
+
 # OS
 .DS_Store
 Thumbs.db
